@@ -2,66 +2,118 @@ import streamlit as st
 import pandas as pd
 import zipfile
 import io
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-st.set_page_config(page_title="CSV Splitter (500 Rows)", layout="wide")
+st.set_page_config(
+    page_title="Fast CSV Cleaner & Splitter",
+    layout="wide"
+)
 
-st.title("📊 CSV Splitter & Row Cleaner")
-st.write("Upload a CSV, remove selected rows, and split into 500-row chunks.")
+st.title("⚡ Fast CSV Cleaner & 500-Row Splitter")
+st.caption("Select rows instantly, remove them, and split CSVs at scale.")
 
-# Upload CSV
-uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+# Upload
+uploaded_file = st.file_uploader("📤 Upload CSV", type=["csv"])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    st.success(f"Loaded {len(df)} rows")
+    st.success(f"Loaded {len(df):,} rows")
 
-    # Show data
-    st.subheader("📄 CSV Preview")
-    st.dataframe(df, use_container_width=True)
+    # Controls
+    st.subheader("⚙️ Controls")
+    col1, col2 = st.columns(2)
 
-    # Row removal
-    st.subheader("🗑️ Select Rows to Remove")
-    rows_to_remove = st.multiselect(
-        "Select row indexes to remove",
-        options=df.index.tolist()
+    with col1:
+        chunk_size = st.slider(
+            "Chunk size",
+            min_value=100,
+            max_value=2000,
+            step=100,
+            value=500
+        )
+
+    with col2:
+        st.write(" ")
+        st.write(" ")
+        run = st.button("🚀 Remove Selected & Split CSV")
+
+    # AgGrid setup
+    st.subheader("📊 Select Rows to REMOVE")
+
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(
+        filter=True,
+        sortable=True,
+        resizable=True
+    )
+    gb.configure_selection(
+        selection_mode="multiple",
+        use_checkbox=True
+    )
+    gb.configure_pagination(
+        paginationAutoPageSize=False,
+        paginationPageSize=25
     )
 
-    if st.button("🚀 Clean & Split CSV"):
-        # Remove rows
-        cleaned_df = df.drop(index=rows_to_remove)
+    grid_options = gb.build()
 
-        st.success(f"Remaining rows: {len(cleaned_df)}")
+    grid_response = AgGrid(
+        df,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        height=500,
+        theme="balham"
+    )
 
-        # Split into 500-row chunks
-        chunk_size = 500
+    selected_rows = grid_response["selected_rows"]
+
+    st.info(f"Selected rows to remove: {len(selected_rows)}")
+
+    if run:
+        if selected_rows:
+            selected_df = pd.DataFrame(selected_rows)
+            cleaned_df = df.drop(index=selected_df.index)
+        else:
+            cleaned_df = df.copy()
+
+        st.success(f"Remaining rows: {len(cleaned_df):,}")
+
+        # Split into chunks
         chunks = [
             cleaned_df.iloc[i:i + chunk_size]
             for i in range(0, len(cleaned_df), chunk_size)
         ]
 
-        # Create ZIP of chunks
+        # ZIP creation
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            for i, chunk in enumerate(chunks):
+            for i, chunk in enumerate(chunks, start=1):
                 csv_buffer = io.StringIO()
                 chunk.to_csv(csv_buffer, index=False)
-                zip_file.writestr(f"csv_chunk_{i + 1}.csv", csv_buffer.getvalue())
+                zip_file.writestr(
+                    f"csv_chunk_{i}_rows_{len(chunk)}.csv",
+                    csv_buffer.getvalue()
+                )
 
         zip_buffer.seek(0)
 
         # Downloads
-        st.subheader("⬇️ Downloads")
+        st.subheader("⬇️ Download Files")
 
-        st.download_button(
-            label="Download Cleaned CSV",
-            data=cleaned_df.to_csv(index=False),
-            file_name="cleaned_csv.csv",
-            mime="text/csv"
-        )
+        col1, col2 = st.columns(2)
 
-        st.download_button(
-            label="Download 500-Row CSV Chunks (ZIP)",
-            data=zip_buffer,
-            file_name="csv_chunks_500_rows.zip",
-            mime="application/zip"
-        )
+        with col1:
+            st.download_button(
+                "Download Cleaned CSV",
+                data=cleaned_df.to_csv(index=False),
+                file_name="cleaned_csv.csv",
+                mime="text/csv"
+            )
+
+        with col2:
+            st.download_button(
+                "Download CSV Chunks (ZIP)",
+                data=zip_buffer,
+                file_name="csv_chunks.zip",
+                mime="application/zip"
+            )
